@@ -1,80 +1,85 @@
 pipeline {
     agent any
-    tools{
-        jdk 'jdk17'
+    
+    tools {
         maven 'maven3'
+        jdk 'jdk17'
     }
+    
     environment{
+        
         SCANNER_HOME= tool 'sonar-scanner'
     }
 
     stages {
-        stage('Code-Compile') {
+        stage('git checkout') {
             steps {
-               sh "mvn clean compile"
+                git 'https://github.com/jaiswaladi246/secretsanta-generator.git'
+            }
+        }
+        stage('Complie') {
+            steps {
+                sh "mvn compile"
+            }
+        }
+        stage('Tests') {
+            steps {
+                sh "mvn test"
+            }
+        }
+        stage('Sonarqube Analysis') {
+            steps {
+                withSonarQubeEnv('sonar') {
+                    sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=santa \
+                    -Dsonar.projectKey=santa -Dsonar.java.binaries=. '''
+    
+                }
             }
         }
         
-        stage('Unit Tests') {
+        stage('Build Application') {
             steps {
-               sh "mvn test"
+                sh "mvn clean package"
             }
         }
         
-		stage('OWASP Dependency Check') {
+        stage('Owasp Scan') {
             steps {
-               dependencyCheck additionalArguments: ' --scan ./ ', odcInstallation: 'DC'
-                    dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
-            }
-        }
-
-
-        stage('Sonar Analysis') {
-            steps {
-               withSonarQubeEnv('sonar'){
-                   sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Santa \
-                   -Dsonar.java.binaries=. \
-                   -Dsonar.projectKey=Santa '''
-               }
-            }
-        }
-
-		 
-        stage('Code-Build') {
-            steps {
-               sh "mvn clean package"
-            }
-        }
-
-         stage('Docker Build') {
-            steps {
-               script{
-                   withDockerRegistry(credentialsId: 'docker-cred') {
-                    sh "docker build -t  santa123 . "
-                 }
-               }
-            }
-        }
-
-        stage('Docker Push') {
-            steps {
-               script{
-                   withDockerRegistry(credentialsId: 'docker-cred') {
-                    sh "docker tag santa123 adijaiswal/santa123:latest"
-                    sh "docker push adijaiswal/santa123:latest"
-                 }
-               }
+                dependencyCheck additionalArguments: ' --scan . ', odcInstallation: 'DC'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
             }
         }
         
-        	 
-        stage('Docker Image Scan') {
+        stage('Build Docker image') {
             steps {
-               sh "trivy image adijaiswal/santa123:latest "
+                script{
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'Docker') {
+                        sh "docker build -t santa:latest ."
+                    }
+                }
             }
-        }}
-        
-         post {
+        }
+        stage('Tag and Push Docker image') {
+            steps {
+                script{
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'Docker') {
+                        sh "docker tag santa:latest varunkumarmc/santa:latest"
+                        sh "docker push varunkumarmc/santa:latest"
+                    }
+                }
+            }
+        }
+        stage('Deploy Application') {
+            steps {
+                script{
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'Docker') {
+                        sh "docker run -d -p 8081:8080 varunkumarmc/santa:latest"
+                    }
+                }
+            }
+        }
+    }
+    post {
             always {
                 emailext (
                     subject: "Pipeline Status: ${BUILD_NUMBER}",
@@ -90,10 +95,6 @@ pipeline {
                     replyTo: 'jenkins@example.com',
                     mimeType: 'text/html'
                 )
-            }
-        }
-		
-		
-
-    
+     }
+    }
 }
